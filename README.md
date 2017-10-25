@@ -1,2 +1,2 @@
-# cs1652---Project-2
+# cs1652-Project2
 TCP minet project 
