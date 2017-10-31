@@ -35,6 +35,7 @@ struct TCPState {
 
 
 int main(int argc, char * argv[]) {
+
     MinetHandle mux;
     MinetHandle sock;
     
@@ -75,23 +76,61 @@ int main(int argc, char * argv[]) {
 
     while (MinetGetNextEvent(event, timeout) == 0) {
 
+
+
 	if ((event.eventtype == MinetEvent::Dataflow) && 
 	    (event.direction == MinetEvent::IN)) {
-	
+		
 	    if (event.handle == mux) {
 		// ip packet has arrived!
-		//printf("IP Address Arrival: %s", mux);
+		printf("IP Address Arrival: %s", mux);		
 
+		TCPHeader h;
+		IPHeader i;
 		Packet p;
+		bool checksumok;
 		unsigned short len;
-		//bool checksumok;
+		unsigned char TCPHeadLen;
+		unsigned char IPHeadLen;
+		unsigned short IPHLen;
 		MinetReceive(mux,p);
-		p.ExtractHeaderFromPayload<TCPHeader>(8);
-		//Buffer &data = p.(std::cout);
+		p.ExtractHeaderFromPayload<TCPHeader>(TCPHeader::EstimateTCPHeaderLength(p));
+		h = p.FindHeader(Headers::TCPHeader);
+		i = p.FindHeader(Headers::IPHeader);
+		checksumok = h.IsCorrectChecksum(p);
 
-    		std::cout << p.Print(std::cout) << "\n";
+		Connection c;
+		i.GetDestIP(c.src);
+		i.GetSourceIP(c.dest);
+		i.GetProtocol(c.protocol);
+		h.GetDestPort(c.srcport);
+		h.GetSourcePort(c.destport);
 
+		ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
+
+		if (cs!=clist.end()) {
+		  printf("HERE!!!!!!!!!!!!!!!!!!!!");
+		  h.GetHeaderLen(TCPHeadLen);
+		  i.GetHeaderLength(IPHeadLen);
+		  len = len - (TCPHeadLen + IPHeadLen);
+		  Buffer &data = p.GetPayload().ExtractFront(len);
+		  SockRequestResponse write(WRITE,
+				    (*cs).connection,
+				    data,
+				    len,
+				    EOK);
+			int i;
+			for ( i = 0; i < len; i++ ){
+			  putc( isprint(data[i]) ? data[i] : '.' , stdout );
+			}		
+		}
+
+		if(!checksumok){
+			printf("CHECKSUM ERROR!");	
+		}
 		
+		std::cout << i << "\n";	
+    		std::cout << h << "\n";		
 	    }
 
 	    if (event.handle == sock) {
