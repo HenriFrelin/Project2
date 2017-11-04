@@ -169,9 +169,11 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 	tcpHead.GetUrgentPtr(urgent);
 
 	Packet p_send;
-	switch(curr_state){
-		case LISTEN:
+	//printf("SWITCH STATEMENT BLOCKED!!!!!!!!!!!!!!!!!!!!");
+	//switch(curr_state){
+		//case LISTEN:
 			if(IS_SYN(flags)){
+				printf("SYN RECIEVED!!!!!!!!!!!!!!!!!!!!");
 				cs->connection = c;
 				cs->state.SetState(SYN_RCVD);
 				cs->state.last_acked = cs->state.last_sent;
@@ -184,8 +186,24 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				make_packet(p_send, *cs, SYNACK, 0, false);
 				MinetSend(mux, p_send);
 			}
-			break;
-	}
+			if(IS_ACK(flags)){
+				printf("3 Way Handshake Complete!");  // temporary test 
+        
+        // data expected in first ack, here we print via buffer 
+        
+        Buffer data = p.GetPayload().ExtractFront(content_len); // UNTESTED 
+        for (int i = 0; i < content_len; i++){
+    		  putc(isprint(data[i]) ? data[i] : '.' , stdout);
+    		}
+        
+			}
+
+			if(IS_FIN(flags)){
+				printf("FIN!");  // temporary test
+				// send ack, then send fin (passive close), expect ack in return 
+			}
+			//break;
+	//}
 
 	std::cout << ipHead << "\n";	
 	std::cout << tcpHead << "\n";
