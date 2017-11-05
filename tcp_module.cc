@@ -586,12 +586,13 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, 
   return rem_bytes;
 }
 
-void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator cs,
-                      ConnectionList<TCPState> &clist) {
-	unsigned int state = cs->state.GetState();
+void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator cs, ConnectionList<TCPState> &list) {
+	
 	Packet p;
 	Buffer data;
-	switch (state) {
+	unsigned int curr_state = cs->curr_state.GetState();
+	
+	switch (curr_state) {
 		case SYN_SENT: {
 			make_packet(p, *cs, SYN, 0, false);
 			MinetSend(mux, p);
@@ -603,7 +604,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator c
 			break;
 		}
 		case ESTABLISHED: {
-		  data = cs->state.SendBuffer;
+		  data = cs->curr_state.SendBuffer;
 		  send_data(mux, *cs, data, true);
 		  break;
 		}
@@ -616,8 +617,8 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator c
 			break;
 		}
 		case TIME_WAIT: {
-			cs->state.SetState(CLOSED);
-			clist.erase(cs);
+			cs->curr_state.SetState(CLOSED);
+			list.erase(cs);
 		}
 		default:
 			break;
