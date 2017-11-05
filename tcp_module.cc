@@ -410,101 +410,135 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState> &
 
 	if (cs == clist.end()) {
 		switch (req.type) {
+
 			case CONNECT: {
-				TCPState state(1, SYN_SENT, 5);
-				ConnectionToStateMapping<TCPState> CTSM(req.connection, 
-				                                      Time()+2, state, true);
-				CTSM.state.last_acked = 0;
-				clist.push_back(CTSM);
+					TCPState state(1, SYN_SENT, 5);
+					ConnectionToStateMapping<TCPState> CTSM(req.connection, 
+							                      Time()+2, state, true);
+					CTSM.state.last_acked = 0;
+					clist.push_back(CTSM);
+					make_packet(p, CTSM, SYN, 0, false);
+					cs->bTmrActive = true;
+					cs->timeout=Time() + 2;
+					MinetSend(mux, p);
+					repl.type = STATUS;
+					repl.connection = req.connection;
+					repl.bytes = 0;
+					repl.error = EOK;
+					MinetSend(sock, repl);
+					break; 
+				      }
 
-				make_packet(p, CTSM, SYN, 0, false);
-
-				cs->bTmrActive = true;
-				cs->timeout=Time() + 2;
-
-				MinetSend(mux, p);
-
-				repl.type = STATUS;
-				repl.connection = req.connection;
-				repl.bytes = 0;
-				repl.error = EOK;
-				MinetSend(sock, repl);
-				break; 
-			}
 			 case ACCEPT: {
-				TCPState state(1, LISTEN, 5);
-				ConnectionToStateMapping<TCPState> CTSM(req.connection, Time(),
-				                                          state, false);
-				clist.push_back(CTSM);
-				repl.type = STATUS;
-				repl.bytes = 0;
-				repl.connection = req.connection;
-				repl.error = EOK;
-				MinetSend(sock, repl);
-				break;
-			}
+					TCPState state(1, LISTEN, 5);
+					ConnectionToStateMapping<TCPState> CTSM(req.connection, Time(),
+						                                  state, false);
+					clist.push_back(CTSM);
+					repl.type = STATUS;
+					repl.bytes = 0;
+					repl.connection = req.connection;
+					repl.error = EOK;
+					MinetSend(sock, repl);
+					break;
+				      }
+
 			case STATUS: {
-				// No action needed.
-				break;
-			}
+					break;
+				     }
+
 			case WRITE: {
-				repl.type = STATUS;
-				repl.connection = req.connection;
-				repl.bytes = 0;
-				repl.error = ENOMATCH;
-				MinetSend(sock, repl);
-				break;
-			}
-			case FORWARD: {
-				// No Action needed.
-				break;
-			}
+					repl.type = STATUS;
+					repl.connection = req.connection;
+					repl.bytes = 0;
+					repl.error = ENOMATCH;
+					MinetSend(sock, repl);
+					break;
+				     }
+
+			case FORWARD:{
+					break;
+				     }
+
 			 case CLOSE: {
-				// Can't close a connection that doesn't exist.
-				repl.type = STATUS;
-				repl.connection = req.connection;
-				repl.bytes = 0;
-				repl.error = ENOMATCH;
-				MinetSend(sock, repl);
-				break;
-			}
+					repl.type = STATUS;
+					repl.connection = req.connection;
+					repl.bytes = 0;
+					repl.error = ENOMATCH;
+					MinetSend(sock, repl);
+					break;
+				      }
+
 			default: {  
-				break;
-			}
+					break;
+				 }
 		}
 	} else {
 		unsigned int state = cs->state.GetState();
 		Buffer buf;
 		switch (req.type) {
 			case CONNECT: {
-				break;
-			}
-			case ACCEPT: {
-				break;
-			}
-			case WRITE: {
-				if (state == ESTABLISHED) {
-				  if (cs->state.SendBuffer.GetSize() + req.data.GetSize() 
-				     > cs->state.TCP_BUFFER_SIZE) {
-				    repl.type = STATUS;
-				    repl.connection = req.connection;
-				    repl.bytes = 0;
-				    repl.error = EBUF_SPACE;
-				    MinetSend(sock, repl);
-				  } else {
-					Buffer copy = req.data;
-					cs->bTmrActive = true;
-					cs->timeout=Time() + 8;
+					break;
+				      }
 
-					int return_value = send_data(mux, *cs, copy, false);
-					if (return_value == 0) {
+			case ACCEPT: {
+					break;
+				     }
+
+			case WRITE: {
+					if (state == ESTABLISHED) {
+					  if (cs->state.SendBuffer.GetSize() + req.data.GetSize() 
+						   > cs->state.TCP_BUFFER_SIZE) {
+						   repl.type = STATUS;
+						   repl.connection = req.connection;
+						   repl.bytes = 0;
+						   repl.error = EBUF_SPACE;
+						   MinetSend(sock, repl);
+					  } 
+					  else {
+						  Buffer copy = req.data;
+						  cs->bTmrActive = true;
+						  cs->timeout=Time() + 8;
+
+						  int return_value = send_data(mux, *cs, copy, false);
+						  if (return_value == 0) {
+							  repl.type = STATUS;
+							  repl.connection = req.connection;
+							  repl.bytes = copy.GetSize();
+							  repl.error = EOK;
+							  MinetSend(sock, repl);    
+						  }
+					  }
+					}
+					break;   
+				    }
+
+			case FORWARD: {
+					break;
+				      }
+
+			case CLOSE: {
+					if (state == ESTABLISHED) {
+					  cs->state.SetState(FIN_WAIT1);
+					  cs->state.last_acked = cs->state.last_acked + 1;
+					  cs->bTmrActive = true; // begin timeout
+					  cs->timeout=Time() + 8;
+					  make_packet(p, *cs, FIN, 0, false);
+					  MinetSend(mux, p);
 					  repl.type = STATUS;
 					  repl.connection = req.connection;
-					  repl.bytes = copy.GetSize();
+					  repl.bytes = 0;
 					  repl.error = EOK;
-					  MinetSend(sock, repl);    
+					  MinetSend(sock, repl);
 					}
-				  }
+					break;
+				   }
+
+			case STATUS: {
+					break;
+				     }
+
+			default:{
+					break;
 				}
 				break;   
 			}
@@ -538,27 +572,44 @@ void handle_sock(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState> &
 	}
 }
 
-int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, Buffer data, bool timedOut) {
-  Packet p;
-  unsigned int last;
-  unsigned int bytes_left;
-  int count = 0;
+int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, Buffer data, bool timeOut) {
+	  Packet p;
+	  unsigned int l;
+	  unsigned int rem_bytes; // bytes that remain
+	  int i = 0;
 
-  if (timedOut) {
-  	last = 0;
-    bytes_left = CTSM.state.SendBuffer.GetSize();
-  } else {
-    last = CTSM.state.SendBuffer.GetSize();
-    CTSM.state.SendBuffer.AddBack(data);
-    bytes_left = data.GetSize();
-  } 
+	  if (timeOut) {
+		  l = 0;
+		  rem_bytes = CTSM.state.SendBuffer.GetSize();
+	  } 
+	  else {
+		  l = CTSM.state.SendBuffer.GetSize();
+		  CTSM.state.SendBuffer.AddBack(data);
+		  rem_bytes = data.GetSize();
+	  } 
 
-  while (bytes_left) {
-    unsigned int bytes_to_send = min(bytes_left, TCP_MAXIMUM_SEGMENT_SIZE);
-    char data_string[bytes_to_send + 1];
+	  while (rem_bytes) {
+		  unsigned int send_bytes = min(rem_bytes, TCP_MAXIMUM_SEGMENT_SIZE);
+		  char str_data[send_bytes + 1];
+		  int data_size = CTSM.state.SendBuffer.GetData(str_data, send_bytes, l);		  
+		  str_data[data_size + 1] = '\0';		 
+		  Buffer send_buf;
+		  send_buf.SetData(str_data, data_size, 0);
+		  cerr << "Buffer Version: \n" << send_buf;
+		  p = send_buf.Extract(0, data_size);
+		    
+		  if (i > 0) {
+		  	make_packet(p, CTSM, PSHACK, data_size, false);
+		  } 
+		  else {
+			make_packet(p, CTSM, PSHACK, data_size, timeOut);
+		  }
 
-    int data_size = CTSM.state.SendBuffer.GetData(data_string, bytes_to_send, last);
-    data_string[data_size + 1] = '\0';
+		  MinetSend(mux, p);
+		  CTSM.state.last_sent = CTSM.state.last_sent + send_bytes;
+		  rem_bytes = rem_bytes - send_bytes;
+		  l = l + data_size;
+		  i++;
 
     Buffer send_buf;
     send_buf.SetData(data_string, data_size, 0);
@@ -579,7 +630,7 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, 
     count++;
   }
 
-  return bytes_left;
+  return rem_bytes;
 }
 
 void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator cs,
