@@ -4,6 +4,8 @@
 // For project parts A and B, an appropriate binary will be 
 // copied over as part of the build process
 
+
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -169,16 +171,59 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 	tcpHead.GetWinSize(winSize);
 	tcpHead.GetUrgentPtr(urgent);
 
-	Packet p_send;
-	//printf("SWITCH STATEMENT BLOCKED!!!!!!!!!!!!!!!!!!!!");
-	//switch(curr_state){
-		//case LISTEN:
-			if(IS_SYN(flags)){
-				printf("SYN RECIEVED!!!!!!!!!!!!!!!!!!!!");
-				cs->connection = c;
-				cs->state.SetState(SYN_RCVD);
-				cs->state.last_acked = cs->state.last_sent;
-				cs->state.SetLastRecvd(seqNum + 1);
+          Packet p_send;
+          //printf("SWITCH STATEMENT BLOCKED!!!!!!!!!!!!!!!!!!!!");
+          //switch(curr_state){
+                  //case LISTEN:
+                  if(IS_SYN(flags)){
+                          printf("SYN RECIEVED!!!!!!!!!!!!!!!!!!!!");
+                          cs->connection = c;
+                          cs->state.SetState(SYN_RCVD);
+                          cs->state.last_acked = cs->state.last_sent;
+                          cs->state.SetLastRecvd(seqNum + 1);
+                          // Set timeout and send SYNACK
+                          cs->bTmrActive = true;
+                          cs->timeout=Time() + 8;
+                          cs->state.last_sent = cs->state.last_sent + 1;
+                          make_packet(p_send, *cs, SYNACK, 0, false);
+                          MinetSend(mux, p_send);
+                  }
+                          //break;
+                  //case SYN_RCVD:
+                  if(IS_ACK(flags)){
+                          printf("3 Way Handshake Complete!");  // temporary test 
+                          cs->state.SetState(ESTABLISHED);
+                          cs->state.SetLastAcked(ackNum);
+                          cs->state.SetSendRwnd(winSize);
+                          cs->state.last_sent = cs->state.last_sent + 1;
+                          // timeout (set for out SYNACK) is turned off because we got an ACK
+                          cs->bTmrActive = false;
+                          // Tell the other modules that the connection was created
+                          static SockRequestResponse * write = NULL;
+                          write = new SockRequestResponse(WRITE, cs->connection, 
+                                                          content, 0, EOK);
+                          MinetSend(sock, *write);
+                          delete write;
+                  }
+                  //break;
+          	  //case SYN_SENT:
+                  if( (IS_SYN(flags) && IS_ACK(flags)) ){
+		          cs->state.SetSendRwnd(winSize);
+		          cs->state.SetLastRecvd(seqNum + 1);
+		          cs->state.last_acked = ackNum;
+		          cs->state.last_sent = cs->state.last_sent + 1;
+		          make_packet(p_send, *cs, ACK, 0, false);
+		          MinetSend(mux, p_send);
+		          cs->state.SetState(ESTABLISHED);
+		          cs->bTmrActive = false;
+		          SockRequestResponse write (WRITE, cs->connection, content, 0, EOK);
+		          MinetSend(sock, write);
+                  }
+                          //break;
+                  //case ESTABLISHED:
+                  if (IS_FIN(flag)) {
+                          cs->state.SetState(CLOSE_WAIT);
+                          cs->state.SetLastRecvd(seqNum + 1);
 
 				// Set timeout and send SYNACK
 				cs->bTmrActive = true;
@@ -318,7 +363,6 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 
 	std::cout << ipHead << "\n";	
 	std::cout << tcpHead << "\n";
-
 }
 
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, TYPE HeaderType, int size, bool timedOut){
