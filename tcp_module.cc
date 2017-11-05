@@ -38,7 +38,8 @@ enum TYPE {
 void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState> &clist);
 void make_packet(Packet &p, ConnectionToStateMapping<TCPState> &CTSM, TYPE HeaderType, int size, bool timedOut);
 void handle_sock(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState> &clist);
-int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, Buffer data, bool isTimeout);
+int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, Buffer data, bool timedOut);
+void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator cs, ConnectionList<TCPState> &clist);
 
 int main(int argc, char * argv[]) {
 
@@ -98,6 +99,12 @@ int main(int argc, char * argv[]) {
 
 		if (event.eventtype == MinetEvent::Timeout) {
 		    // timeout ! probably need to resend some packets
+		    ConnectionList<TCPState>::iterator cs = clist.FindEarliest();
+			if (cs != clist.end()) {
+				if (Time().operator > ((*cs).timeout)) {
+					handle_timeout(mux, cs, clist);
+				}
+			}
 		}
 
     }
@@ -141,26 +148,25 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 
 	ConnectionList<TCPState>::iterator cs = clist.FindMatching(c);
 
-	if (cs != clist.end()) {
-	  printf("HERE!!!!!!!!!!!!!!!!!!!!");
-	  tcpHead.GetHeaderLen(TCPHeadLen);
-	  ipHead.GetHeaderLength(IPHeadLen);
-	  ipHead.GetTotalLength(content_len);
-	  content_len -= WORD_SIZE * (TCPHeadLen + IPHeadLen);
+	tcpHead.GetHeaderLen(TCPHeadLen);
+	ipHead.GetHeaderLength(IPHeadLen);
+	ipHead.GetTotalLength(content_len);
+	content_len -= WORD_SIZE * (TCPHeadLen + IPHeadLen);
 
-	  Buffer data = p.GetPayload().ExtractFront(content_len);
-	  SockRequestResponse write(WRITE,
-			    (*cs).connection,
-			    data,
-			    content_len,
-			    EOK);
+	Buffer data = p.GetPayload().ExtractFront(content_len);
+	SockRequestResponse write(WRITE,
+		    (*cs).connection,
+		    data,
+		    content_len,
+		    EOK);
 
-		for (int i = 0; i < content_len; i++){
-		  putc(isprint(data[i]) ? data[i] : '.' , stdout);
-		}
+	for (int i = 0; i < content_len; i++){
+	  putc(isprint(data[i]) ? data[i] : '.' , stdout);
+	}
 
-		curr_state = cs->state.GetState();
-	} else {
+	curr_state = cs->state.GetState();
+
+	if (cs == clist.end()) {
 		std::cout << "Connection is not in the ConnectionList.\n";
 	}
 
@@ -171,89 +177,46 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 	tcpHead.GetWinSize(winSize);
 	tcpHead.GetUrgentPtr(urgent);
 
-          Packet p_send;
-          //printf("SWITCH STATEMENT BLOCKED!!!!!!!!!!!!!!!!!!!!");
-          //switch(curr_state){
-                  //case LISTEN:
-                  if(IS_SYN(flags)){
-                          printf("SYN RECIEVED!!!!!!!!!!!!!!!!!!!!");
-                          cs->connection = c;
-                          cs->state.SetState(SYN_RCVD);
-                          cs->state.last_acked = cs->state.last_sent;
-                          cs->state.SetLastRecvd(seqNum + 1);
-                          // Set timeout and send SYNACK
-                          cs->bTmrActive = true;
-                          cs->timeout=Time() + 8;
-                          cs->state.last_sent = cs->state.last_sent + 1;
-                          make_packet(p_send, *cs, SYNACK, 0, false);
-                          MinetSend(mux, p_send);
-                  }
-                          //break;
-                  //case SYN_RCVD:
-                  if(IS_ACK(flags)){
-                          printf("3 Way Handshake Complete!");  // temporary test 
-                          cs->state.SetState(ESTABLISHED);
-                          cs->state.SetLastAcked(ackNum);
-                          cs->state.SetSendRwnd(winSize);
-                          cs->state.last_sent = cs->state.last_sent + 1;
-                          // timeout (set for out SYNACK) is turned off because we got an ACK
-                          cs->bTmrActive = false;
-                          // Tell the other modules that the connection was created
-                          static SockRequestResponse * write = NULL;
-                          write = new SockRequestResponse(WRITE, cs->connection, 
-                                                          content, 0, EOK);
-                          MinetSend(sock, *write);
-                          delete write;
-                  }
-                  //break;
-          	  //case SYN_SENT:
-                  if( (IS_SYN(flags) && IS_ACK(flags)) ){
-		          cs->state.SetSendRwnd(winSize);
-		          cs->state.SetLastRecvd(seqNum + 1);
-		          cs->state.last_acked = ackNum;
-		          cs->state.last_sent = cs->state.last_sent + 1;
-		          make_packet(p_send, *cs, ACK, 0, false);
-		          MinetSend(mux, p_send);
-		          cs->state.SetState(ESTABLISHED);
-		          cs->bTmrActive = false;
-		          SockRequestResponse write (WRITE, cs->connection, content, 0, EOK);
-		          MinetSend(sock, write);
-                  }
-                          //break;
-                  //case ESTABLISHED:
-                  if (IS_FIN(flag)) {
-                          cs->state.SetState(CLOSE_WAIT);
-                          cs->state.SetLastRecvd(seqNum + 1);
-
-				// Set timeout and send SYNACK
-				cs->bTmrActive = true;
-				cs->timeout=Time() + 8;
-				cs->state.last_sent = cs->state.last_sent + 1;
-				make_packet(p_send, *cs, SYNACK, 0, false);
-				MinetSend(mux, p_send);
+	Packet p_send;
+	switch(curr_state){
+		case LISTEN: {
+			if(IS_SYN(flags)){
+			    	printf("SYN RECIEVED!!!!!!!!!!!!!!!!!!!!");
+			    	cs->connection = c;
+			    	cs->state.SetState(SYN_RCVD);
+			    	cs->state.last_acked = cs->state.last_sent;
+			    	cs->state.SetLastRecvd(seqNum + 1);
+			    	// Set timeout and send SYNACK
+			    	cs->bTmrActive = true;
+			    	cs->timeout=Time() + 8;
+			    	cs->state.last_sent = cs->state.last_sent + 1;
+			    	make_packet(p_send, *cs, SYNACK, 0, false);
+			    	MinetSend(mux, p_send);
 			}
-			//break;
-		//case SYN_RCVD:
+			break;
+		}
+		case SYN_RCVD: {
 			if(IS_ACK(flags)){
-				printf("3 Way Handshake Complete!");  // temporary test 
-				cs->state.SetState(ESTABLISHED);
-				cs->state.SetLastAcked(ackNum);
-				cs->state.SetSendRwnd(winSize);
-				cs->state.last_sent = cs->state.last_sent + 1;
+			    	printf("3 Way Handshake Complete!");  // temporary test 
+			    	cs->state.SetState(ESTABLISHED);
+			    	cs->state.SetLastAcked(ackNum);
+			    	cs->state.SetSendRwnd(winSize);
+			    	cs->state.last_sent = cs->state.last_sent + 1;
 
-				// timeout (set for out SYNACK) is turned off because we got an ACK
-				cs->bTmrActive = false;
+			    	// timeout (set for out SYNACK) is turned off because we got an ACK
+			    	cs->bTmrActive = false;
 
-				// Tell the other modules that the connection was created
-				static SockRequestResponse * write = NULL;
-				write = new SockRequestResponse(WRITE, cs->connection, 
-				                                content, 0, EOK);
-				MinetSend(sock, *write);
-				delete write;
+			    	// Tell the other modules that the connection was created
+			    	static SockRequestResponse * write = NULL;
+			    	write = new SockRequestResponse(WRITE, cs->connection, 
+			    	                                data, 0, EOK);
+			    	MinetSend(sock, *write);
+			    	delete write;
 			}
-        	//break;
-        //case SYN_SENT:
-	        if( (IS_SYN(flags) && IS_ACK(flags)) ){
+			break;
+		}
+		case SYN_SENT: {
+			if( (IS_SYN(flags) && IS_ACK(flags)) ){
 				cs->state.SetSendRwnd(winSize);
 				cs->state.SetLastRecvd(seqNum + 1);
 				cs->state.last_acked = ackNum;
@@ -264,13 +227,13 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				cs->state.SetState(ESTABLISHED);
 
 				cs->bTmrActive = false;
-				SockRequestResponse write (WRITE, cs->connection, content, 0, EOK);
+				SockRequestResponse write (WRITE, cs->connection, data, 0, EOK);
 				MinetSend(sock, write);
-
-	        }
-			//break;
-		//case ESTABLISHED:
-			if (IS_FIN(flag)) {
+			}
+			break;
+		}
+		case ESTABLISHED: {
+			if (IS_FIN(flags)) {
 				cs->state.SetState(CLOSE_WAIT);
 				cs->state.SetLastRecvd(seqNum + 1);
 
@@ -286,11 +249,11 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				MinetSend(mux, p);
 			}
 
-			if (IS_PSH(flag) || content_size != 0) {
-				cs->state.SetSendRwnd(window_size);
-				cs->state.last_recvd = seqnum + content.GetSize();
+			if (IS_PSH(flags) || content_len != 0) {
+				cs->state.SetSendRwnd(winSize);
+				cs->state.last_recvd = seqNum + data.GetSize();
 
-				cs->state.RecvBuffer.AddBack(content);
+				cs->state.RecvBuffer.AddBack(data);
 				SockRequestResponse write(WRITE, cs->connection,
 				                           cs->state.RecvBuffer, 
 				                           cs->state.RecvBuffer.GetSize(), 
@@ -302,28 +265,29 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				make_packet(p_send, *cs, ACK, 0, false);
 				MinetSend(mux, p_send);
 			}
-			if (IS_ACK(flag)) {
+			if (IS_ACK(flags)) {
 				if (ackNum >= cs->state.last_acked) {
-				  int data_acked = ack - cs->state.last_acked;
-				  cs->state.last_acked = ackNum;
-				  cs->state.SendBuffer.Erase(0, data_acked);
+					int data_acked = ackNum - cs->state.last_acked;
+					cs->state.last_acked = ackNum;
+					cs->state.SendBuffer.Erase(0, data_acked);
 
-				  cs->bTmrActive = false; 
+					cs->bTmrActive = false; 
 				}
 				if (cs->state.GetState() == LAST_ACK) {
-				  cs->state.SetState(CLOSED);
-				  clist.erase(cs); 
+					cs->state.SetState(CLOSED);
+					clist.erase(cs); 
 				}
 			}
-			//break;
-		//case LAST_ACK:
+			break;
+		}
+		case LAST_ACK: {
 			if (IS_ACK(flags)) {
 				cs->state.SetState(CLOSED);
 				clist.erase(cs);
 			}
-			//break;
-			
-		//case FIN_WAIT1:
+			break;
+		}			
+		case FIN_WAIT1: {
 			if (IS_ACK(flags)) {
 				cs->state.SetState(FIN_WAIT2);
 			}
@@ -336,9 +300,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				cs->timeout = Time() + (2 * MSL_TIME_SECS);
 				MinetSend(mux, p_send);
 			}
-			//break;
-		
-		//case FIN_WAIT2:
+			break;
+		}		
+		case FIN_WAIT2: {
 			if (IS_FIN(flags)) {
 				cs->state.SetState(TIME_WAIT);
 				cs->state.SetLastRecvd(seqNum + 1);
@@ -348,9 +312,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				cs->timeout = Time() + (2*MSL_TIME_SECS);
 				MinetSend(mux, p_send); 
 			}
-			//break;
-
-		//case TIME_WAIT:
+			break;
+		}
+		case TIME_WAIT: {
 			if (IS_FIN(flags)) {
 				cs->state.SetLastRecvd(seqNum + 1);
 
@@ -358,8 +322,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				make_packet(p_send, *cs, ACK, 0 ,false);
 				MinetSend(mux, p_send); 
 			}
-			//break;
-	//}
+			break;
+		}
+	}
 
 	std::cout << ipHead << "\n";	
 	std::cout << tcpHead << "\n";
@@ -615,4 +580,42 @@ int send_data(const MinetHandle &mux, ConnectionToStateMapping<TCPState> &CTSM, 
   }
 
   return bytes_left;
+}
+
+void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator cs,
+                      ConnectionList<TCPState> &clist) {
+	unsigned int state = cs->state.GetState();
+	Packet p;
+	Buffer data;
+	switch (state) {
+		case SYN_SENT: {
+			make_packet(p, *cs, SYN, 0, false);
+			MinetSend(mux, p);
+			break;
+		}
+		case SYN_RCVD: {
+			make_packet(p, *cs, SYNACK, 0, true);
+			MinetSend(mux, p);
+			break;
+		}
+		case ESTABLISHED: {
+		  data = cs->state.SendBuffer;
+		  send_data(mux, *cs, data, true);
+		  break;
+		}
+		case FIN_WAIT1: {
+
+		}
+		case LAST_ACK: {
+			make_packet(p, *cs, FIN, 0, true);
+			MinetSend(mux, p);
+			break;
+		}
+		case TIME_WAIT: {
+			cs->state.SetState(CLOSED);
+			clist.erase(cs);
+		}
+		default:
+			break;
+	}
 }
