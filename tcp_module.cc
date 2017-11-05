@@ -186,21 +186,131 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 				make_packet(p_send, *cs, SYNACK, 0, false);
 				MinetSend(mux, p_send);
 			}
+			//break;
+		//case SYN_RCVD:
 			if(IS_ACK(flags)){
 				printf("3 Way Handshake Complete!");  // temporary test 
-        
-        // data expected in first ack, here we print via buffer 
-        
-        Buffer data = p.GetPayload().ExtractFront(content_len); // UNTESTED 
-        for (int i = 0; i < content_len; i++){
-    		  putc(isprint(data[i]) ? data[i] : '.' , stdout);
-    		}
-        
+				cs->state.SetState(ESTABLISHED);
+				cs->state.SetLastAcked(ackNum);
+				cs->state.SetSendRwnd(winSize);
+				cs->state.last_sent = cs->state.last_sent + 1;
+
+				// timeout (set for out SYNACK) is turned off because we got an ACK
+				cs->bTmrActive = false;
+
+				// Tell the other modules that the connection was created
+				static SockRequestResponse * write = NULL;
+				write = new SockRequestResponse(WRITE, cs->connection, 
+				                                content, 0, EOK);
+				MinetSend(sock, *write);
+				delete write;
+			}
+        	//break;
+        //case SYN_SENT:
+	        if( (IS_SYN(flags) && IS_ACK(flags)) ){
+				cs->state.SetSendRwnd(winSize);
+				cs->state.SetLastRecvd(seqNum + 1);
+				cs->state.last_acked = ackNum;
+
+				cs->state.last_sent = cs->state.last_sent + 1;
+				make_packet(p_send, *cs, ACK, 0, false);
+				MinetSend(mux, p_send);
+				cs->state.SetState(ESTABLISHED);
+
+				cs->bTmrActive = false;
+				SockRequestResponse write (WRITE, cs->connection, content, 0, EOK);
+				MinetSend(sock, write);
+
+	        }
+			//break;
+		//case ESTABLISHED:
+			if (IS_FIN(flag)) {
+				cs->state.SetState(CLOSE_WAIT);
+				cs->state.SetLastRecvd(seqNum + 1);
+
+				cs->bTmrActive = true;
+				cs->timeout=Time() + 8;        
+
+				make_packet(p_send, *cs, ACK, 0, false);
+				MinetSend(mux, p_send);
+
+				Packet p;
+				cs->state.SetState(LAST_ACK);
+				make_packet(p, *cs, FIN, 0, false); 
+				MinetSend(mux, p);
 			}
 
-			if(IS_FIN(flags)){
-				printf("FIN!");  // temporary test
-				// send ack, then send fin (passive close), expect ack in return 
+			if (IS_PSH(flag) || content_size != 0) {
+				cs->state.SetSendRwnd(window_size);
+				cs->state.last_recvd = seqnum + content.GetSize();
+
+				cs->state.RecvBuffer.AddBack(content);
+				SockRequestResponse write(WRITE, cs->connection,
+				                           cs->state.RecvBuffer, 
+				                           cs->state.RecvBuffer.GetSize(), 
+				                           EOK);
+				MinetSend(sock, write);
+
+				cs->state.RecvBuffer.Clear();
+
+				make_packet(p_send, *cs, ACK, 0, false);
+				MinetSend(mux, p_send);
+			}
+			if (IS_ACK(flag)) {
+				if (ackNum >= cs->state.last_acked) {
+				  int data_acked = ack - cs->state.last_acked;
+				  cs->state.last_acked = ackNum;
+				  cs->state.SendBuffer.Erase(0, data_acked);
+
+				  cs->bTmrActive = false; 
+				}
+				if (cs->state.GetState() == LAST_ACK) {
+				  cs->state.SetState(CLOSED);
+				  clist.erase(cs); 
+				}
+			}
+			//break;
+		//case LAST_ACK:
+			if (IS_ACK(flags)) {
+				cs->state.SetState(CLOSED);
+				clist.erase(cs);
+			}
+			//break;
+			
+		//case FIN_WAIT1:
+			if (IS_ACK(flags)) {
+				cs->state.SetState(FIN_WAIT2);
+			}
+			if (IS_FIN(flags)) {
+				cs->state.SetState(TIME_WAIT);
+				cs->state.SetLastRecvd(seqNum + 1);
+				make_packet(p_send, *cs, ACK, 0, false);
+
+				cs->bTmrActive = true;
+				cs->timeout = Time() + (2 * MSL_TIME_SECS);
+				MinetSend(mux, p_send);
+			}
+			//break;
+		
+		//case FIN_WAIT2:
+			if (IS_FIN(flags)) {
+				cs->state.SetState(TIME_WAIT);
+				cs->state.SetLastRecvd(seqNum + 1);
+				make_packet(p_send, *cs, ACK, 0 ,false);
+
+				cs->bTmrActive = true;
+				cs->timeout = Time() + (2*MSL_TIME_SECS);
+				MinetSend(mux, p_send); 
+			}
+			//break;
+
+		//case TIME_WAIT:
+			if (IS_FIN(flags)) {
+				cs->state.SetLastRecvd(seqNum + 1);
+
+				cs->timeout = Time() + 5;
+				make_packet(p_send, *cs, ACK, 0 ,false);
+				MinetSend(mux, p_send); 
 			}
 			//break;
 	//}
