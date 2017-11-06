@@ -178,6 +178,9 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 	tcpHead.GetUrgentPtr(urgent);
 
 	Packet p_send;
+
+	printf("\nCurrent State: %d\n",curr_state);
+	// 0 - closed  1 - listen  2 - synrcv  3 - synsent  4 - synsent1  5 - established  6 senddata  7 - closewait  8 - finwait1  9 - closing  10 - lastacked  11 - finwait2  12 - timewait
 	switch(curr_state){
 		case LISTEN: {
 			if(IS_SYN(flags)){
@@ -197,7 +200,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 		}
 		case SYN_RCVD: {
 			if(IS_ACK(flags)){
-			    	printf("3 Way Handshake Complete!");  // temporary test 
+			    	//printf("3 Way Handshake Complete!");  // temporary test 
 			    	cs->state.SetState(ESTABLISHED);
 			    	cs->state.SetLastAcked(ackNum);
 			    	cs->state.SetSendRwnd(winSize);
@@ -234,6 +237,7 @@ void handle_packet(MinetHandle &mux, MinetHandle &sock, ConnectionList<TCPState>
 		}
 		case ESTABLISHED: {
 			if (IS_FIN(flags)) {
+				printf("FIN!!!!!!!!!!!!!!!!!!");
 				cs->state.SetState(CLOSE_WAIT);
 				cs->state.SetLastRecvd(seqNum + 1);
 
