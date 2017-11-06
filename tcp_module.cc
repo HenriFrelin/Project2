@@ -590,7 +590,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator c
 	
 	Packet p;
 	Buffer data;
-	unsigned int curr_state = cs->curr_state.GetState();
+	unsigned int curr_state = cs->state.GetState();
 	
 	switch (curr_state) {
 		case SYN_SENT: {
@@ -604,7 +604,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator c
 			break;
 		}
 		case ESTABLISHED: {
-		  data = cs->curr_state.SendBuffer;
+		  data = cs->state.SendBuffer;
 		  send_data(mux, *cs, data, true);
 		  break;
 		}
@@ -617,7 +617,7 @@ void handle_timeout(const MinetHandle &mux, ConnectionList<TCPState>::iterator c
 			break;
 		}
 		case TIME_WAIT: {
-			cs->curr_state.SetState(CLOSED);
+			cs->state.SetState(CLOSED);
 			list.erase(cs);
 		}
 		default:
