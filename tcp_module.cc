@@ -87,18 +87,14 @@ int main(int argc, char * argv[]) {
 		    (event.direction == MinetEvent::IN)) {
 			
 		    if (event.handle == mux) {
-				// ip packet has arrived!
 				handle_packet(mux, sock, clist);
 		    }
 
 		    if (event.handle == sock) {
-				// socket request or response has arrived
 				handle_sock(mux, sock, clist);
 		    }
 		}
-
 		if (event.eventtype == MinetEvent::Timeout) {
-		    // timeout ! probably need to resend some packets
 		    ConnectionList<TCPState>::iterator cs = clist.FindEarliest();
 			if (cs != clist.end()) {
 				if (Time().operator > ((*cs).timeout)) {
